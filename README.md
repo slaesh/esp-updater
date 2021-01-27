@@ -1,6 +1,10 @@
 # esp-updater
 
-arduino code:
+just start the docker-compose file:
+
+`docker-compose up`
+
+arduino code could look like this:
 
 ```c++
 
@@ -64,3 +68,5 @@ void setup() {
 
 }
 ```
+
+tested with an ESP8266
