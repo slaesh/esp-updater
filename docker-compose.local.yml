@@ -1,0 +1,11 @@
+version: "3.8"
+
+services:
+  esp-updater-local:
+    build: .
+    container_name: esp-updater-local
+    restart: unless-stopped
+    ports:
+      - 35982:35982
+    volumes:
+      - ./fw:/fw:rw
