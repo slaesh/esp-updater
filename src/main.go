@@ -132,27 +132,54 @@ func getHighestVersion(dirname string) (string, error) {
 	return highestFile, nil
 }
 
+func patchHeaderKey(key string, platform string) string {
+	return strings.ReplaceAll(key, "#esp#", platform)
+}
+
 func update(w http.ResponseWriter, r *http.Request, ps httprouter.Params) {
 
 	firmwaretype := ps.ByName("firmwaretype")
 
-	userAgent := r.Header.Get("User-Agent")
-	mac := r.Header.Get("X-Esp8266-Sta-Mac")
-	chipSize := r.Header.Get("X-Esp8266-Chip-Size")
-	sketchSize := r.Header.Get("X-Esp8266-Sketch-Size")
-	freeSpace := r.Header.Get("X-Esp8266-Free-Space")
-	sdkVersion := r.Header.Get("X-Esp8266-Sdk-Version")
-	version := r.Header.Get("X-Esp8266-Version")
+	/*
+		map[
+			Cache-Control:[no-cache]
+			Connection:[close]
+			User-Agent:[ESP32-http-Update]
+			X-Esp32-Ap-Mac:[30:83:98:D1:A6:75]
+			X-Esp32-Chip-Size:[8388608]
+			X-Esp32-Free-Space:[1310720]
+			X-Esp32-Mode:[sketch]
+			X-Esp32-Sdk-Version:[v3.3.5-1-g85c43024c]
+			X-Esp32-Sketch-Md5:[a82293a19146b14386acce8f01159d80]
+			X-Esp32-Sketch-Sha256:[4805A8252F6551F80BF9A574D9D06D97329B22A492AE78E825661258F905AABD]
+			X-Esp32-Sketch-Size:[1098688]
+			X-Esp32-Sta-Mac:[30:83:98:D1:A6:74]
+			X-Esp32-Version:[3.0.0]
+		]
+	*/
 
-	if userAgent != "ESP8266-http-Update" ||
+	userAgent := r.Header.Get("User-Agent")
+	espPlatform := strings.Split(userAgent, "-")[0]
+
+	mac := r.Header.Get(patchHeaderKey("X-#esp#-Sta-Mac", espPlatform))
+	chipSize := r.Header.Get(patchHeaderKey("X-#esp#-Chip-Size", espPlatform))
+	sketchSize := r.Header.Get(patchHeaderKey("X-#esp#-Sketch-Size", espPlatform))
+	freeSpace := r.Header.Get(patchHeaderKey("X-#esp#-Free-Space", espPlatform))
+	sdkVersion := r.Header.Get(patchHeaderKey("X-#esp#-Sdk-Version", espPlatform))
+	version := r.Header.Get(patchHeaderKey("X-#esp#-Version", espPlatform))
+
+	if !strings.HasPrefix(userAgent, "ESP") ||
+		!strings.HasSuffix(userAgent, "-http-Update") ||
 		mac == "" ||
 		chipSize == "" ||
 		sketchSize == "" ||
 		freeSpace == "" ||
 		sdkVersion == "" ||
 		version == "" {
-		w.WriteHeader(403 /* no esp8266 */)
+
 		fmt.Println("invalid request: ", r.Header)
+
+		w.WriteHeader(403 /* no esp8266 */)
 		return
 	}
 

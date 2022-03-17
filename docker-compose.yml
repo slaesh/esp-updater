@@ -9,3 +9,10 @@ services:
       - 35982:35982
     volumes:
       - ./fw:/fw:rw
+
+    logging:
+      driver: gcplogs
+      options: # https://docs.docker.com/config/containers/logging/gcplogs/
+        gcp-project: srv-slaesh
+        gcp-meta-zone: west1
+        gcp-meta-name: srv.slae.sh
