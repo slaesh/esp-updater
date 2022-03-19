@@ -31,14 +31,30 @@ func sumMd5(f *os.File) (string, error) {
 	return hex.EncodeToString(hashInBytes), nil
 }
 
-func sendFile(w http.ResponseWriter, r *http.Request, path string) {
+func getFileSize(path string) int64 {
+
 	f, err := os.Open(path)
+	if err != nil {
+		return -1
+	}
+
 	defer f.Close() //Close after function return
 
+	fStat, _ := f.Stat() //Get info from file
+	//fSize := strconv.FormatInt(fStat.Size(), 10) //Get file size as a string
+	//return fSize
+
+	return fStat.Size()
+}
+
+func sendFile(w http.ResponseWriter, r *http.Request, path string) (int64, error) {
+	f, err := os.Open(path)
 	if err != nil {
 		http.Error(w, "File not found.", 404)
-		return
+		return -1, err
 	}
+
+	defer f.Close() //Close after function return
 
 	filename := f.Name()
 	fStat, _ := f.Stat()                         //Get info from file
@@ -47,22 +63,22 @@ func sendFile(w http.ResponseWriter, r *http.Request, path string) {
 	md5sumStr, err := sumMd5(f)
 	if err != nil {
 		http.Error(w, "could not sum md5.", 400)
-		return
+		return -1, err
 	}
 
-	fmt.Println(filename, fSize, md5sumStr)
+	// fmt.Println(filename, fSize, md5sumStr)
 
 	w.Header().Set("Content-Type", "application/octet-stream")
 	w.Header().Set("Content-Disposition", "attachment; filename="+filename)
 	w.Header().Set("Content-Length", fSize)
 	w.Header().Set("X-MD5", md5sumStr)
 
-	fmt.Println("sending file..")
+	// fmt.Println("sending file..")
 
 	w.WriteHeader(200)
 
 	f.Seek(0, 0)
-	io.Copy(w, f)
+	return io.Copy(w, f)
 }
 
 func index(w http.ResponseWriter, r *http.Request, _ httprouter.Params) {
@@ -106,7 +122,7 @@ func getHighestVersion(dirname string) (string, error) {
 		return "", err
 	}
 
-	highestVersion, err := semver.Make("0.0.0")
+	highestVersion, _ := semver.Make("0.0.0")
 	highestFile := ""
 
 	for _, f := range files {
@@ -168,6 +184,8 @@ func update(w http.ResponseWriter, r *http.Request, ps httprouter.Params) {
 	sdkVersion := r.Header.Get(patchHeaderKey("X-#esp#-Sdk-Version", espPlatform))
 	version := r.Header.Get(patchHeaderKey("X-#esp#-Version", espPlatform))
 
+	logPrefix := fmt.Sprintf("[%s//%s] ", espPlatform, mac)
+
 	if !strings.HasPrefix(userAgent, "ESP") ||
 		!strings.HasSuffix(userAgent, "-http-Update") ||
 		mac == "" ||
@@ -177,41 +195,77 @@ func update(w http.ResponseWriter, r *http.Request, ps httprouter.Params) {
 		sdkVersion == "" ||
 		version == "" {
 
-		fmt.Println("invalid request: ", r.Header)
+		fmt.Println(logPrefix+"invalid request: ", r.Header)
 
 		w.WriteHeader(403 /* no esp8266 */)
 		return
 	}
 
-	fmt.Println("check for update..", mac, version)
+	fmt.Println(logPrefix+"checking for an update..", firmwaretype, version)
+	fmt.Println(logPrefix+"chipsize", chipSize, "sketchSize", sketchSize, "freeSpace", freeSpace)
 
 	versionArduino, err := semver.Make(version)
-	fmt.Println(versionArduino, err)
+	//fmt.Println(versionArduino, err)
+	if err != nil {
+		fmt.Println(logPrefix + "invalid version, no semver!")
 
-	if err == nil {
-		fwFolder := "./fw/" + firmwaretype
-		fwFile, err := getHighestVersion(fwFolder)
-		fmt.Println(fwFolder, fwFile, err)
+		w.WriteHeader(304 /* no update present.. ! */)
+		return
+	}
 
-		if err == nil {
-			versionServer, err := filenameToSemver(fwFile)
-			fmt.Println(versionServer, err)
+	fwFolder := "./fw/" + firmwaretype
+	fwFile, err := getHighestVersion(fwFolder)
+	// fmt.Println(fwFolder, fwFile, err)
+	if err != nil {
+		fmt.Println(logPrefix+"cant find a firmware file", err)
 
-			if err == nil {
-				// -1: v1 is less than v2
-				//  0: equal
-				//  1: v1 is greater than v2
+		w.WriteHeader(304 /* no update present.. ! */)
+		return
+	}
 
-				result := versionArduino.Compare(versionServer)
-				fmt.Println(result)
-				if result == -1 {
-					fmt.Println("we need to serve an update!!")
+	versionServer, err := filenameToSemver(fwFile)
+	//fmt.Println(versionServer, err)
+	if err != nil {
+		fmt.Println(logPrefix+"firmware file has no valid semver syntax", err)
 
-					sendFile(w, r, fwFolder+"/"+fwFile)
-					return
-				}
-			}
+		w.WriteHeader(304 /* no update present.. ! */)
+		return
+	}
+
+	fileSize := getFileSize(fwFolder + "/" + fwFile)
+	freeSize, _ := strconv.ParseInt(freeSpace, 10, 64)
+
+	fmt.Println(logPrefix+"latest firmware found with version", versionServer, "size", fileSize)
+	if fileSize > freeSize {
+
+		fmt.Println(logPrefix+"firmware file is to big?", fileSize, freeSize)
+
+		w.WriteHeader(304 /* no update present.. ! */)
+		return
+	}
+
+	// -1: v1 is less than v2
+	//  0: equal
+	//  1: v1 is greater than v2
+
+	result := versionArduino.Compare(versionServer)
+	// fmt.Println(result)
+	if result == -1 {
+		fmt.Println(logPrefix + "send our update!!")
+
+		written, err := sendFile(w, r, fwFolder+"/"+fwFile)
+
+		if err != nil {
+
+			fmt.Println(logPrefix+"something went wrong..", err)
+		} else {
+
+			fmt.Println(logPrefix+"done!", written)
 		}
+
+		return
+	} else if result == 1 {
+		fmt.Println(logPrefix + "device version is newer than our last firmware file found?! Oo")
 	}
 
 	w.WriteHeader(304 /* no update present.. ! */)
